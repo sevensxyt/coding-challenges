@@ -1,7 +1,7 @@
 use std::ops::Range;
 use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Token {
     Colon,   // :
     Comma,   // ,
@@ -118,6 +118,7 @@ impl<'a> Lexer<'a> {
             match self.peek() {
                 Some(b'.') | Some(b'e') | Some(b'E') => (),
                 Some(byte) if byte.is_ascii_digit() => {
+                    self.next()?;
                     return Err(LexerErrorKind::InvalidNumber(NumberError::LeadingZero));
                 }
                 _ => {
@@ -134,17 +135,12 @@ impl<'a> Lexer<'a> {
                 Some(b'0') => {
                     return Err(LexerErrorKind::InvalidNumber(NumberError::LeadingZero));
                 }
-                None => {
-                    return Err(LexerErrorKind::InvalidNumber(
-                        NumberError::InvalidNegative {
-                            reason: "'-' cannot be the last character",
-                        },
-                    ));
-                }
+
                 _ => {
+                    self.next()?;
                     return Err(LexerErrorKind::InvalidNumber(
                         NumberError::InvalidNegative {
-                            reason: "'-' must be followed by a digit",
+                            reason: INVALID_NEGATIVE_POSTFIX,
                         },
                     ));
                 }
@@ -164,7 +160,7 @@ impl<'a> Lexer<'a> {
                 b'.' => {
                     if found_decimal {
                         return Err(LexerErrorKind::InvalidNumber(NumberError::InvalidDecimal {
-                            reason: "multiple decimal points found",
+                            reason: MULTIPLE_DECIMAL_POINTS,
                         }));
                     }
 
@@ -173,7 +169,7 @@ impl<'a> Lexer<'a> {
 
                     if !self.curr().is_some_and(|b| b.is_ascii_digit()) {
                         return Err(LexerErrorKind::InvalidNumber(NumberError::InvalidDecimal {
-                            reason: "decimal point must be followed by a digit",
+                            reason: INVALID_DECIMAL_POSTFIX,
                         }));
                     }
                 }
@@ -181,7 +177,7 @@ impl<'a> Lexer<'a> {
                     if found_exponent {
                         return Err(LexerErrorKind::InvalidNumber(
                             NumberError::InvalidExponent {
-                                reason: "multiple exponents found",
+                                reason: MULTIPLE_EXPONENTS,
                             },
                         ));
                     }
@@ -195,7 +191,7 @@ impl<'a> Lexer<'a> {
                         _ => {
                             return Err(LexerErrorKind::InvalidNumber(
                                 NumberError::InvalidExponent {
-                                    reason: "exponent must be followed by '+' or '-' or a digit",
+                                    reason: INVALID_EXPONENT_POSTFIX,
                                 },
                             ));
                         }
@@ -277,6 +273,7 @@ impl<'a> Lexer<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct LexerError {
     kind: LexerErrorKind,
     line: usize,
@@ -311,6 +308,14 @@ pub enum StringError {
     Unterminated,
 }
 
+const MULTIPLE_DECIMAL_POINTS: &str = "multiple decimal points found";
+const INVALID_DECIMAL_POSTFIX: &str = "decimal point must be followed by a digit";
+
+const MULTIPLE_EXPONENTS: &str = "multiple exponents found";
+const INVALID_EXPONENT_POSTFIX: &str = "exponent must be followed by '+' or '-' or a digit";
+
+const INVALID_NEGATIVE_POSTFIX: &str = "'-' must be followed by a digit";
+
 #[derive(Error, Debug)]
 pub enum NumberError {
     #[error("{reason}")]
@@ -324,6 +329,156 @@ pub enum NumberError {
 
     #[error("{reason}")]
     InvalidNegative { reason: &'static str },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use LexerErrorKind::*;
+
+    fn expect_success(input: &str) -> Vec<Token> {
+        let mut lexer = Lexer::new(input.as_bytes());
+        lexer.lex().expect("expected lexer to succeed")
+    }
+
+    fn expect_error(input: &str) -> LexerError {
+        let mut lexer = Lexer::new(input.as_bytes());
+        lexer.lex().expect_err("expected lexer to error")
+    }
+
+    #[test]
+    fn punctuation() {
+        let tokens = expect_success(":,{}[]");
+        let expected = [
+            Token::Colon,
+            Token::Comma,
+            Token::Lcurl,
+            Token::Rcurl,
+            Token::Lsquare,
+            Token::Rsquare,
+        ];
+
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn string() {
+        let input = "\"hello world\"";
+        let tokens = expect_success(input);
+
+        // quotes should not be included in range
+        let range = 1..input.len() - 1;
+        let expected = [Token::String(range)];
+
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn number() {
+        let input = "-1.2e+3";
+        let tokens = expect_success(input);
+
+        let range = 0..input.len();
+        let expected = [Token::Number(range)];
+
+        assert_eq!(tokens, expected)
+    }
+
+    #[test]
+    fn literals() {
+        [
+            ("true", [Token::True]),
+            ("false", [Token::False]),
+            ("null", [Token::Null]),
+        ]
+        .iter()
+        .for_each(|(input, expected)| {
+            let tokens = expect_success(input);
+
+            assert_eq!(tokens, expected);
+        });
+    }
+
+    #[test]
+    fn empty_input() {
+        let tokens = expect_success("");
+
+        assert_eq!(tokens, []);
+    }
+
+    #[test]
+    fn rejects_unterminated_string() {
+        let LexerError { kind, line, col } = expect_error("\"hello");
+
+        assert!(matches!(kind, InvalidString(StringError::Unterminated)));
+        assert_eq!(line, 1);
+        assert_eq!(col, 7);
+    }
+
+    #[test]
+    fn rejects_number_with_leading_zero() {
+        let LexerError { kind, line, col } = expect_error("01");
+
+        assert!(matches!(kind, InvalidNumber(NumberError::LeadingZero)));
+        assert_eq!(line, 1);
+        assert_eq!(col, 2);
+    }
+
+    #[test]
+    fn rejects_decimal_with_multiple_decimal_points() {
+        let LexerError { kind, line, col } = expect_error("1.2.3");
+
+        assert!(matches!(
+            kind,
+            InvalidNumber(NumberError::InvalidDecimal {
+                reason: MULTIPLE_DECIMAL_POINTS
+            })
+        ));
+        assert_eq!(line, 1);
+        assert_eq!(col, 4);
+    }
+
+    #[test]
+    fn rejects_decimal_with_invalid_postfix() {
+        let LexerError { kind, line, col } = expect_error("1.");
+
+        assert!(matches!(
+            kind,
+            InvalidNumber(NumberError::InvalidDecimal {
+                reason: INVALID_DECIMAL_POSTFIX
+            })
+        ));
+        assert_eq!(line, 1);
+        assert_eq!(col, 3);
+    }
+
+    #[test]
+    fn rejects_exponent_with_invalid_postfix() {
+        let LexerError { kind, line, col } = expect_error("1e");
+
+        assert!(matches!(
+            kind,
+            InvalidNumber(NumberError::InvalidExponent {
+                reason: INVALID_EXPONENT_POSTFIX
+            })
+        ));
+        assert_eq!(line, 1);
+        assert_eq!(col, 3);
+    }
+
+    #[test]
+    fn rejects_negative_without_following_digit() {
+        let LexerError { kind, line, col } = expect_error("-a");
+
+        assert!(matches!(
+            kind,
+            InvalidNumber(NumberError::InvalidNegative {
+                reason: INVALID_NEGATIVE_POSTFIX
+            })
+        ));
+        assert_eq!(line, 1);
+        assert_eq!(col, 2);
+    }
 }
 
 type Result<T> = std::result::Result<T, LexerErrorKind>;
