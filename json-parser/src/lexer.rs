@@ -30,8 +30,34 @@ impl Token {
             _ => return None,
         })
     }
-}
 
+    pub fn print(&self, input: &[u8]) {
+        let s = match self {
+            Token::Colon
+            | Token::Comma
+            | Token::Lcurl
+            | Token::Rcurl
+            | Token::Lsquare
+            | Token::Rsquare
+            | Token::Eof
+            | Token::True
+            | Token::False
+            | Token::Null => format!("{self:?}"),
+            Token::String(range) | Token::Number(range) => {
+                let bytes = &input[range.clone()];
+                let s = str::from_utf8(bytes).unwrap_or("invalid utf8");
+                let ident = match self {
+                    Token::String(_) => "String",
+                    Token::Number(_) => "Number",
+                    _ => unreachable!(),
+                };
+                format!("{ident}({s})")
+            }
+        };
+
+        println!("{s}")
+    }
+}
 pub struct Lexer<'a> {
     input: &'a [u8],
     pos: usize,
@@ -151,11 +177,8 @@ impl<'a> Lexer<'a> {
 
         let mut found_decimal = false;
         let mut found_exponent = false;
-        loop {
-            let Some(b) = self.curr() else {
-                break;
-            };
 
+        while let Some(b) = self.curr() {
             match b {
                 b'.' => {
                     if found_decimal {
@@ -167,6 +190,7 @@ impl<'a> Lexer<'a> {
                     found_decimal = true;
                     self.next()?;
 
+                    // dangling . or not followed by digit
                     if !self.curr().is_some_and(|b| b.is_ascii_digit()) {
                         return Err(LexerErrorKind::InvalidNumber(NumberError::InvalidDecimal {
                             reason: INVALID_DECIMAL_POSTFIX,
@@ -214,11 +238,7 @@ impl<'a> Lexer<'a> {
 
         let start = self.pos;
 
-        loop {
-            let Some(b) = self.curr() else {
-                return Err(LexerErrorKind::InvalidString(StringError::Unterminated));
-            };
-
+        while let Some(b) = self.curr() {
             match b {
                 b'"' => {
                     let end = self.pos;
@@ -230,11 +250,16 @@ impl<'a> Lexer<'a> {
                     self.next()?;
                     self.next()?;
                 }
+                b'\n' => {
+                    return Err(LexerErrorKind::InvalidString(StringError::UnescapedNewline));
+                }
                 _ => {
                     self.next()?;
                 }
             }
         }
+
+        return Err(LexerErrorKind::InvalidString(StringError::Unterminated));
     }
 
     fn next(&mut self) -> Result<u8> {
@@ -292,11 +317,11 @@ impl std::fmt::Display for LexerError {
 
 #[derive(Debug, Error)]
 pub enum LexerErrorKind {
-    #[error("invalid string: {0}")]
+    #[error("[invalid string] {0}")]
     InvalidString(StringError),
-    #[error("invalid number: {0}")]
+    #[error("[invalid number] {0}")]
     InvalidNumber(NumberError),
-    #[error("invalid token: {0}")]
+    #[error("[invalid token] {0}")]
     InvalidToken(u8),
     #[error("eof")]
     Eof,
@@ -306,6 +331,8 @@ pub enum LexerErrorKind {
 pub enum StringError {
     #[error("string not terminated, missing \"")]
     Unterminated,
+    #[error("string contains unescaped newline")]
+    UnescapedNewline,
 }
 
 const MULTIPLE_DECIMAL_POINTS: &str = "multiple decimal points found";
@@ -411,6 +438,15 @@ mod tests {
         let LexerError { kind, line, col } = expect_error("\"hello");
 
         assert!(matches!(kind, InvalidString(StringError::Unterminated)));
+        assert_eq!(line, 1);
+        assert_eq!(col, 7);
+    }
+
+    #[test]
+    fn rejects_string_with_unescaped_newline() {
+        let LexerError { kind, line, col } = expect_error("\"hello\nworld\"");
+
+        assert!(matches!(kind, InvalidString(StringError::UnescapedNewline)));
         assert_eq!(line, 1);
         assert_eq!(col, 7);
     }
