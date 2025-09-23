@@ -85,13 +85,18 @@ impl<'a> Parser<'a> {
 
     fn parse_object(&mut self) -> Result {
         let _ = self.next(); // consume lbrace
+        let mut object: HashMap<String, Value> = HashMap::new();
+
+        if self.peek() == Some(&Token::Rcurl) {
+            let _ = self.next()?;
+            return Ok(Value::Object(object));
+        }
 
         // key must be string
         let Some(Token::String(range)) = self.curr() else {
             return Err(ParserError::NonStringKey);
         };
 
-        let mut object: HashMap<String, Value> = HashMap::new();
         let key = self.read_string(range)?;
 
         if object.contains_key(&key) {
