@@ -1,7 +1,7 @@
 use std::ops::Range;
 use thiserror::Error;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Token {
     Colon,   // :
     Comma,   // ,
@@ -259,7 +259,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        return Err(LexerErrorKind::InvalidString(StringError::Unterminated));
+        Err(LexerErrorKind::InvalidString(StringError::Unterminated))
     }
 
     fn next(&mut self) -> Result<u8> {
