@@ -19,14 +19,6 @@ pub struct Parser<'a> {
     position: usize,
 }
 
-const VALUES: [Token; 5] = [
-    Token::Number(0..0),
-    Token::String(0..0),
-    Token::True,
-    Token::False,
-    Token::Null,
-];
-
 impl<'a> Parser<'a> {
     pub fn new(tokens: Vec<Token>, input: &'a [u8]) -> Self {
         Self {
@@ -79,7 +71,9 @@ impl<'a> Parser<'a> {
                 self.next()?;
                 Ok(Value::Null)
             }
-            _ => Err(ParserError::InvalidValue),
+            _ => Err(ParserError::InvalidValue {
+                found: token.clone(),
+            }),
         }
     }
 
@@ -87,32 +81,53 @@ impl<'a> Parser<'a> {
         let _ = self.next(); // consume lbrace
         let mut object: HashMap<String, Value> = HashMap::new();
 
-        if self.peek() == Some(&Token::Rcurl) {
-            let _ = self.next()?;
-            return Ok(Value::Object(object));
+        while let Some(token) = self.curr() {
+            if token == &Token::Rcurl {
+                let _ = self.next()?;
+                return Ok(Value::Object(object));
+            }
+
+            // key must be string
+            let Some(Token::String(range)) = self.curr() else {
+                return Err(ParserError::InvalidKey);
+            };
+
+            let key = self.read_string(range)?;
+
+            if object.contains_key(&key) {
+                return Err(ParserError::DuplicateKey);
+            };
+
+            let _ = self.next(); // consume key
+
+            let Ok(Token::Colon) = self.next() else {
+                return Err(ParserError::MissingColon);
+            };
+
+            let value = self.parse_value()?;
+            object.insert(key, value);
+
+            match self.curr() {
+                Some(Token::Comma) => {
+                    if self.peek() == Some(&Token::Rcurl) {
+                        return Err(ParserError::TrailingComma);
+                    }
+
+                    let _ = self.next()?;
+                }
+                Some(Token::Rcurl) => {
+                    let _ = self.next()?;
+                    return Ok(Value::Object(object));
+                }
+                other => {
+                    return Err(ParserError::InvalidValue {
+                        found: other.cloned().unwrap_or(Token::Null),
+                    });
+                }
+            }
         }
 
-        // key must be string
-        let Some(Token::String(range)) = self.curr() else {
-            return Err(ParserError::NonStringKey);
-        };
-
-        let key = self.read_string(range)?;
-
-        if object.contains_key(&key) {
-            return Err(ParserError::DuplicateKey);
-        };
-
-        let _ = self.next(); // consume key
-
-        let Ok(Token::Colon) = self.next() else {
-            return Err(ParserError::MissingColon);
-        };
-
-        let value = self.parse_value()?;
-        object.insert(key, value);
-
-        Ok(Value::Object(object))
+        Err(ParserError::UnexpectedEof)
     }
 
     fn parse_array(&mut self) -> Result {
@@ -120,7 +135,7 @@ impl<'a> Parser<'a> {
 
         let _ = self.next(); // consume lsquare
 
-        if self.peek() == Some(&Token::Rsquare) {
+        if self.curr() == Some(&Token::Rsquare) {
             let _ = self.next()?;
             return Ok(Value::Array(array));
         }
@@ -185,8 +200,10 @@ pub enum ParserError {
     #[error("Json must start with an object or array, found {found:?}")]
     InvalidStart { found: Token },
 
-    #[error("Json values can only be an object, array, number, string, true, false, or null")]
-    InvalidValue,
+    #[error(
+        "Json values can only be an object, array, number, string, true, false, or null, found: {found:?}"
+    )]
+    InvalidValue { found: Token },
 
     #[error("Json keys must be followed by a colon")]
     MissingColon,
@@ -198,13 +215,16 @@ pub enum ParserError {
     UnexpectedEof,
 
     #[error("Keys must be strings")]
-    NonStringKey,
+    InvalidKey,
 
     #[error("Keys must be unique within an object")]
     DuplicateKey,
 
     #[error("Array value must either be terminated or followed by a comma")]
     InvalidArray,
+
+    #[error("Trailing commas are not allowed")]
+    TrailingComma,
 }
 
 type Result = std::result::Result<Value, ParserError>;
