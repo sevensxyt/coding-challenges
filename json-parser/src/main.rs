@@ -3,10 +3,10 @@ use std::time::Instant;
 
 use humansize::{DECIMAL, format_size};
 use num_format::{Locale, ToFormattedString};
+use parser::Parser;
 
 mod lexer;
 mod parser;
-mod types;
 
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
@@ -30,7 +30,7 @@ fn main() {
 
     let mut lexer = lexer::Lexer::new(&input);
 
-    let start = Instant::now();
+    let lex_start = Instant::now();
     let tokens = match lexer.lex() {
         Ok(tokens) => tokens,
         Err(e) => {
@@ -38,10 +38,10 @@ fn main() {
             return;
         }
     };
-    let end = start.elapsed();
+    let lex_end = lex_start.elapsed();
 
     let size = format_size(input.len(), DECIMAL);
-    let duration = end.as_secs_f64();
+    let lex_duration = lex_end.as_secs_f64();
     let count = tokens.len().to_formatted_string(&Locale::en);
 
     if verbose {
@@ -50,6 +50,29 @@ fn main() {
     }
 
     println!("File size: {size}");
-    println!("Duration: {duration}s");
+    println!("Lex duration: {lex_duration}s");
     println!("Tokens: {count}");
+
+    let mut parser = Parser::new(tokens, &input);
+    let parse_start = Instant::now();
+    let value = parser.parse();
+    let parse_end = parse_start.elapsed();
+
+    let Some(value) = value else {
+        return;
+    };
+
+    let parsed = match value {
+        Ok(value) => value,
+        Err(e) => {
+            println!("Outcome: invalid");
+            eprintln!("{e}");
+            return;
+        }
+    };
+
+    let parse_duration = parse_end.as_secs_f64();
+    println!("Outcome: valid");
+    println!("Parse duration: {parse_duration}s");
+    println!("Total duration: {}s", lex_duration + parse_duration);
 }
