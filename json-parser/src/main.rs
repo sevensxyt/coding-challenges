@@ -62,6 +62,7 @@ fn main() {
         return;
     };
 
+    #[allow(unused_variables)]
     let parsed = match value {
         Ok(value) => value,
         Err(e) => {
