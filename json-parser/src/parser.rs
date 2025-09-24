@@ -4,11 +4,11 @@ use crate::lexer::Token;
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
-pub enum Value {
-    Object(HashMap<String, Value>),
-    Array(Vec<Value>),
-    String(String),
-    Number(String),
+pub enum Value<'a> {
+    Object(HashMap<&'a str, Value<'a>>),
+    Array(Vec<Value<'a>>),
+    String(&'a str),
+    Number(&'a str),
     Boolean(bool),
     Null,
 }
@@ -28,7 +28,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(&mut self) -> Option<std::result::Result<Value, ParserError>> {
+    pub fn parse(&mut self) -> Option<std::result::Result<Value<'a>, ParserError>> {
         let token = self.curr()?;
 
         if matches!(token, Token::Lcurl | Token::Lsquare) {
@@ -41,7 +41,7 @@ impl<'a> Parser<'a> {
         .into()
     }
 
-    fn parse_value(&mut self) -> std::result::Result<Value, ParserError> {
+    fn parse_value(&mut self) -> std::result::Result<Value<'a>, ParserError> {
         let Some(token) = self.curr() else {
             return Err(ParserError::UnexpectedEof);
         };
@@ -50,14 +50,14 @@ impl<'a> Parser<'a> {
             Token::Lcurl => self.parse_object(),
             Token::Lsquare => self.parse_array(),
             Token::String(range) => {
-                let s = self.read_string(range)?;
+                let s = Self::read_str(self.input, range)?;
                 self.next()?;
                 Ok(Value::String(s))
             }
             Token::Number(range) => {
-                let s = self.read_string(range)?;
+                let s = Self::read_str(self.input, range)?;
                 self.next()?;
-                Ok(Value::String(s))
+                Ok(Value::Number(s))
             }
             Token::True => {
                 self.next()?;
@@ -77,9 +77,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_object(&mut self) -> Result {
+    fn parse_object(&mut self) -> Result<'a> {
         let _ = self.next(); // consume lbrace
-        let mut object: HashMap<String, Value> = HashMap::new();
+        let mut object: HashMap<&str, Value<'a>> = HashMap::new();
 
         while let Some(token) = self.curr() {
             if token == &Token::Rcurl {
@@ -92,7 +92,7 @@ impl<'a> Parser<'a> {
                 return Err(ParserError::InvalidKey);
             };
 
-            let key = self.read_string(range)?;
+            let key = Self::read_str(self.input, range)?;
 
             if object.contains_key(&key) {
                 return Err(ParserError::DuplicateKey);
@@ -130,7 +130,7 @@ impl<'a> Parser<'a> {
         Err(ParserError::UnexpectedEof)
     }
 
-    fn parse_array(&mut self) -> Result {
+    fn parse_array(&mut self) -> Result<'a> {
         let mut array = Vec::new();
 
         let _ = self.next(); // consume lsquare
@@ -189,9 +189,11 @@ impl<'a> Parser<'a> {
         self.tokens.get(self.position + 1)
     }
 
-    fn read_string(&self, range: &Range<usize>) -> std::result::Result<String, ParserError> {
-        String::from_utf8(self.input[range.clone()].to_vec())
-            .map_err(|_| ParserError::NonUTF8String)
+    fn read_str<'b>(
+        input: &'b [u8],
+        range: &Range<usize>,
+    ) -> std::result::Result<&'b str, ParserError> {
+        std::str::from_utf8(&input[range.clone()]).map_err(|_| ParserError::NonUTF8String)
     }
 }
 
@@ -227,4 +229,4 @@ pub enum ParserError {
     TrailingComma,
 }
 
-type Result = std::result::Result<Value, ParserError>;
+type Result<'a> = std::result::Result<Value<'a>, ParserError>;
