@@ -109,9 +109,7 @@ impl<'a> Lexer<'a> {
 
         let token = match b {
             b'"' => self.read_string()?,
-            b't' => self.read_literal("true")?,
-            b'f' => self.read_literal("false")?,
-            b'n' => self.read_literal("null")?,
+            b if b.is_ascii_alphabetic() => self.read_literal()?,
             byte if byte == b'-' || byte.is_ascii_digit() => self.read_number()?,
             byte => return Err(LexerErrorKind::InvalidToken(byte)),
         };
@@ -119,21 +117,25 @@ impl<'a> Lexer<'a> {
         Ok(token)
     }
 
-    fn read_literal(&mut self, keyword: &str) -> Result<Token> {
+    fn read_literal(&mut self) -> Result<Token> {
         let start = self.pos;
-        let end = start + keyword.len();
 
-        if self.input.get(start..end) == Some(keyword.as_bytes()) {
-            self.pos += keyword.len();
+        while let Some(b) = self.curr()
+            && b.is_ascii_alphabetic()
+        {
+            self.next()?;
+        }
 
-            match keyword {
-                "true" => Ok(Token::True),
-                "false" => Ok(Token::False),
-                "null" => Ok(Token::Null),
-                _ => Err(LexerErrorKind::InvalidToken(keyword.as_bytes()[0])),
-            }
-        } else {
-            Err(LexerErrorKind::InvalidToken(keyword.as_bytes()[0]))
+        let end = self.pos;
+        let literal = &self.input[start..end];
+
+        match literal {
+            b"true" => Ok(Token::True),
+            b"false" => Ok(Token::False),
+            b"null" => Ok(Token::Null),
+            _ => Err(LexerErrorKind::InvalidLiteral(
+                String::from_utf8_lossy(literal).to_string(),
+            )),
         }
     }
 
@@ -321,6 +323,8 @@ pub enum LexerErrorKind {
     InvalidString(StringError),
     #[error("[invalid number] {0}")]
     InvalidNumber(NumberError),
+    #[error("[invalid literal] {0}")]
+    InvalidLiteral(String),
     #[error("[invalid token] {0}")]
     InvalidToken(u8),
     #[error("eof")]

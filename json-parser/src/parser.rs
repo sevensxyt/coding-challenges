@@ -4,7 +4,7 @@ use crate::lexer::Token;
 use thiserror::Error;
 
 #[allow(unused)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Value<'a> {
     Object(HashMap<&'a str, Value<'a>>),
     Array(Vec<Value<'a>>),
